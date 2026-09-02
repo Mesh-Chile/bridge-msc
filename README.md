@@ -15,6 +15,11 @@ Un solo binario de ~2,6 MB, configuración por variables de entorno, ~1 MB de RA
 en marcha. Corre en cualquier host Linux (una Raspberry Pi, un mini-PC) con un
 nodo MeshCore Companion conectado por USB.
 
+**¿En Chile?** El hub de la comunidad ya está andando en
+`mqtts://bridge-msc.meshchile.cl:8884` y `.env.example` viene apuntado ahí: solo
+necesitas tus credenciales. Ver [Conectarse al hub de
+MeshChile](#conectarse-al-hub-de-meshchile).
+
 > **Nota.** meshchan es una propuesta de la comunidad MeshChile. No está
 > afiliada al proyecto MeshCore ni ratificada por él.
 
@@ -26,7 +31,7 @@ nodo MeshCore Companion conectado por USB.
 2. [Cómo se ve en la práctica](#2-cómo-se-ve-en-la-práctica)
 3. [Requisitos](#3-requisitos)
 4. [Instalación](#4-instalación)
-5. [Configuración](#5-configuración)
+5. [Configuración](#5-configuración) · [Hub de MeshChile](#conectarse-al-hub-de-meshchile)
 6. [Cómo comprobar que funciona](#6-cómo-comprobar-que-funciona)
 7. [Operación diaria](#7-operación-diaria)
 8. [Cuando algo falla](#8-cuando-algo-falla)
@@ -175,11 +180,41 @@ CHANNEL_NAME=Public
 CHANNEL_IDX=0
 ISLAND_IATA=SCL
 CHAN_MQTT_TRANSPORT=tcp
-CHAN_MQTT_HOST=hub.ejemplo.cl
-CHAN_MQTT_PORT=8883
-CHAN_MQTT_USER=bridge-scl
-CHAN_MQTT_PASS=...
+CHAN_MQTT_HOST=bridge-msc.meshchile.cl
+CHAN_MQTT_PORT=8884
+CHAN_MQTT_USER=tu-usuario
+CHAN_MQTT_PASS=tu-clave
 ```
+
+### Conectarse al hub de MeshChile
+
+Si estás en Chile, no tienes que levantar ningún broker: usa el hub de la
+comunidad. `.env.example` ya viene apuntado ahí, y estos son los datos:
+
+| | |
+|---|---|
+| **Servidor** | `bridge-msc.meshchile.cl` |
+| **Puerto** | `8884` |
+| **Protocolo** | MQTT sobre TLS (`mqtts`), certificado Let's Encrypt |
+| **Topic** | `meshchan/CL/Public` |
+| **Canal en el nodo** | `Public`, índice `0` |
+
+Lo único que falta son **tus credenciales**: cada bridge lleva las suyas, para
+que se puedan revocar por separado sin afectar a los demás. Pídelas en la
+comunidad MeshChile, junto con los datos del canal público para cargarlos en el
+nodo.
+
+Comprobar que el servidor responde, antes de configurar nada:
+
+```bash
+openssl s_client -connect bridge-msc.meshchile.cl:8884 \
+  -servername bridge-msc.meshchile.cl </dev/null 2>/dev/null | \
+  openssl x509 -noout -subject -dates
+```
+
+Si estás en otra comunidad, cambia esos valores por los de tu hub: el agente es
+genérico y funciona contra cualquier broker MQTT (Mosquitto, por ejemplo). No
+necesita un broker que sepa de MeshCore.
 
 Las que más se prestan a confusión:
 
@@ -213,8 +248,8 @@ Imprime nombre y pubkey del nodo, los canales con sus índices y los contactos.
 
 ```bash
 CHANNEL_NAME=Public ISLAND_IATA=SCL CHAN_REGION=CL \
-CHAN_MQTT_TRANSPORT=tcp CHAN_MQTT_HOST=hub.ejemplo.cl CHAN_MQTT_PORT=8883 \
-CHAN_MQTT_USER=bridge-scl CHAN_MQTT_PASS=... \
+CHAN_MQTT_TRANSPORT=tcp CHAN_MQTT_HOST=bridge-msc.meshchile.cl CHAN_MQTT_PORT=8884 \
+CHAN_MQTT_USER=tu-usuario CHAN_MQTT_PASS=tu-clave \
 MC_ADDRESS=/dev/null \
 cargo run --example hub_smoke
 ```
