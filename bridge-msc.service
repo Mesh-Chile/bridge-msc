@@ -1,0 +1,46 @@
+# Unit systemd para bridge-msc.
+#
+# Instalacion:
+#   sudo cp target/release/bridge-msc /usr/local/bin/
+#   sudo cp .env.example /etc/bridge-msc.env   # y editalo
+#   sudo chmod 600 /etc/bridge-msc.env         # trae credenciales
+#   sudo cp bridge-msc.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bridge-msc
+#
+# Ajusta User= al usuario que corresponda en tu host.
+
+[Unit]
+Description=bridge-msc — bridge del canal publico MeshCore <-> hub MQTT
+Documentation=https://github.com/Mesh-Chile/bridge-msc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bridge-msc
+# Necesario para abrir el serial del nodo. Sacalo si usas MC_TRANSPORT=tcp.
+SupplementaryGroups=dialout
+EnvironmentFile=/etc/bridge-msc.env
+ExecStart=/usr/local/bin/bridge-msc
+Restart=always
+RestartSec=10
+
+# Endurecimiento. Si algo falla al arrancar, lo primero que hay que probar a
+# soltar es ProtectHome/PrivateDevices (PrivateDevices=yes NO deja abrir el
+# serial, por eso va en no).
+PrivateDevices=no
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+MemoryMax=128M
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

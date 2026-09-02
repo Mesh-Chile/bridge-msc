@@ -1,0 +1,51 @@
+[package]
+name = "bridge-msc"
+version = "0.1.0"
+edition = "2021"
+description = "Bridge del canal publico MeshCore entre la RF y un hub MQTT (protocolo meshchan v0.1), con observabilidad opcional"
+license = "MIT"
+repository = "https://github.com/Mesh-Chile/bridge-msc"
+
+[lib]
+name = "bridge_msc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bridge-msc"
+path = "src/main.rs"
+
+[dependencies]
+# Conexion al nodo MeshCore. OJO: el crate se llama "meshcore-rs" pero el
+# nombre de la lib es `meshcore_rs` (no `meshcore`).
+meshcore-rs = { version = "0.2", default-features = false, features = ["serial", "tcp"] }
+
+# MQTT sobre websockets + TLS. Usamos "use-rustls-no-provider" y traemos
+# nosotros rustls con el proveedor `ring`: TLS 100% Rust, sin cmake ni un
+# toolchain C, que es lo que hace viable el cross-compile a arm64.
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider", "websocket"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+rustls-pemfile = "2"
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio-stream = "0.1"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["ble"]
+# El transporte BLE arrastra btleplug (dbus/bluez). Se puede sacar con
+# --no-default-features para un binario mas chico en un host sin bluetooth.
+ble = ["meshcore-rs/ble"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
