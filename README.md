@@ -17,7 +17,8 @@ nodo MeshCore Companion conectado por USB.
 
 **¿En Chile?** El hub de la comunidad ya está andando en
 `mqtts://bridge-msc.meshchile.cl:8884` y `.env.example` viene apuntado ahí: solo
-necesitas tus credenciales. Ver [Conectarse al hub de
+necesitas tus credenciales, que se piden **por Telegram a
+[@n3v1l](https://t.me/n3v1l)**. Ver [Conectarse al hub de
 MeshChile](#conectarse-al-hub-de-meshchile).
 
 > **Nota.** meshchan es una propuesta de la comunidad MeshChile. No está
@@ -31,7 +32,7 @@ MeshChile](#conectarse-al-hub-de-meshchile).
 2. [Cómo se ve en la práctica](#2-cómo-se-ve-en-la-práctica)
 3. [Requisitos](#3-requisitos)
 4. [Instalación](#4-instalación)
-5. [Configuración](#5-configuración) · [Hub de MeshChile](#conectarse-al-hub-de-meshchile)
+5. [Configuración](#5-configuración) · [Hub de MeshChile](#conectarse-al-hub-de-meshchile) · [Pedir credenciales](#cómo-pedir-tus-credenciales)
 6. [Cómo comprobar que funciona](#6-cómo-comprobar-que-funciona)
 7. [Operación diaria](#7-operación-diaria)
 8. [Cuando algo falla](#8-cuando-algo-falla)
@@ -93,7 +94,8 @@ Tres cosas que vale la pena notar en esa línea:
    comunidad se piden a la comunidad y se cargan en el nodo **antes** de levantar
    el agente.
 3. **Credenciales propias del hub MQTT**. Cada bridge debería tener las suyas,
-   para que se puedan revocar por separado (spec §4).
+   para que se puedan revocar por separado (spec §4). En el hub de MeshChile se
+   piden por Telegram a [@n3v1l](https://t.me/n3v1l).
 4. El usuario que corre el agente en el grupo `dialout`, si usas serial.
 5. Rust 1.75 o superior para compilar.
 
@@ -199,10 +201,18 @@ comunidad. `.env.example` ya viene apuntado ahí, y estos son los datos:
 | **Topic** | `meshchan/CL/Public` |
 | **Canal en el nodo** | `Public`, índice `0` |
 
-Lo único que falta son **tus credenciales**: cada bridge lleva las suyas, para
-que se puedan revocar por separado sin afectar a los demás. Pídelas en la
-comunidad MeshChile, junto con los datos del canal público para cargarlos en el
-nodo.
+### Cómo pedir tus credenciales
+
+Cada bridge lleva las suyas, para que se puedan revocar por separado sin afectar
+a los demás. Para que te creen un usuario:
+
+> **Escríbele a [@n3v1l](https://t.me/n3v1l) por Telegram y pide un usuario de
+> bridge.**
+
+Cuéntale de qué zona vas a puentear (el `ISLAND_IATA` que piensas usar) y con qué
+nodo. Te devuelve un usuario y una clave que pegas tal cual en tu `.env`.
+Aprovecha de pedirle también los datos del canal público, para cargarlos en el
+nodo antes de levantar el agente.
 
 Comprobar que el servidor responde, antes de configurar nada:
 
