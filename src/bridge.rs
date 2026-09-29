@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
+use crate::config::Canal;
+
 /// Valor del campo `v` que emitimos (spec §6, §12).
 pub const PROTOCOL_VERSION: u8 = 1;
 
@@ -167,21 +169,21 @@ pub fn format_injection(
 pub enum Inbound {
     /// Es nuestra propia publicacion devuelta por el hub (spec §8.2.1).
     EcoPropio,
-    /// El canal del payload no es el nuestro.
+    /// El canal del payload no es ninguno de los nuestros.
     OtroCanal,
     /// Version mayor de protocolo que no sabemos interpretar (spec §12).
     VersionIncompatible,
     Inyectar,
 }
 
-pub fn classify_inbound(msg: &ChanMessage, my_pubkey: &str, my_channel: &str) -> Inbound {
+pub fn classify_inbound(msg: &ChanMessage, my_pubkey: &str, my_channels: &[Canal]) -> Inbound {
     if msg.v > PROTOCOL_VERSION {
         return Inbound::VersionIncompatible;
     }
     if msg.origin_bridge.eq_ignore_ascii_case(my_pubkey) {
         return Inbound::EcoPropio;
     }
-    if msg.channel != my_channel {
+    if !my_channels.iter().any(|c| c.name == msg.channel) {
         return Inbound::OtroCanal;
     }
     Inbound::Inyectar
@@ -395,6 +397,13 @@ mod tests {
         );
     }
 
+    fn mios() -> Vec<Canal> {
+        vec![
+            Canal { name: "publica".into(), idx: 0 },
+            Canal { name: "bots".into(), idx: 1 },
+        ]
+    }
+
     fn msg(bridge: &str, channel: &str) -> ChanMessage {
         ChanMessage {
             v: 1,
@@ -413,7 +422,7 @@ mod tests {
     fn el_eco_propio_no_se_reinyecta() {
         let m = msg("AABB", "publica");
         assert_eq!(
-            classify_inbound(&m, "aabb", "publica"),
+            classify_inbound(&m, "aabb", &mios()),
             Inbound::EcoPropio,
             "la comparacion de pubkey debe ser case-insensitive"
         );
@@ -422,7 +431,7 @@ mod tests {
     #[test]
     fn otro_canal_se_descarta() {
         let m = msg("CCDD", "otro");
-        assert_eq!(classify_inbound(&m, "aabb", "publica"), Inbound::OtroCanal);
+        assert_eq!(classify_inbound(&m, "aabb", &mios()), Inbound::OtroCanal);
     }
 
     #[test]
@@ -430,7 +439,7 @@ mod tests {
         let mut m = msg("CCDD", "publica");
         m.v = 2;
         assert_eq!(
-            classify_inbound(&m, "aabb", "publica"),
+            classify_inbound(&m, "aabb", &mios()),
             Inbound::VersionIncompatible
         );
     }
@@ -438,7 +447,13 @@ mod tests {
     #[test]
     fn un_mensaje_remoto_del_canal_se_inyecta() {
         let m = msg("CCDD", "publica");
-        assert_eq!(classify_inbound(&m, "aabb", "publica"), Inbound::Inyectar);
+        assert_eq!(classify_inbound(&m, "aabb", &mios()), Inbound::Inyectar);
+    }
+
+    #[test]
+    fn un_mensaje_remoto_del_segundo_canal_se_inyecta() {
+        let m = msg("CCDD", "bots");
+        assert_eq!(classify_inbound(&m, "aabb", &mios()), Inbound::Inyectar);
     }
 
     #[test]

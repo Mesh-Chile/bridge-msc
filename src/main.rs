@@ -1,7 +1,7 @@
 //! bridge-msc — implementacion de referencia del protocolo meshchan v0.1.
 //!
 //! Un solo proceso, una sola conexion al nodo MeshCore, dos funciones:
-//!   1. bridge bidireccional del canal publico contra un hub MQTT (siempre);
+//!   1. bridge bidireccional de uno o mas canales (CHANNELS) contra un hub MQTT (siempre);
 //!   2. publisher de observabilidad para el mapa (opcional, OBS_ENABLED).
 //!
 //! ADVERTENCIA: este agente es dueno EXCLUSIVO del puerto del nodo. Ningun otro
@@ -9,6 +9,7 @@
 
 use bridge_msc::{bridge, config, dedup, mesh, mqtt, observability, ratelimit};
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 use bridge::{ChanMessage, Inbound};
-use config::Config;
+use config::{Canal, Config};
 use dedup::Dedup;
 use ratelimit::{Denial, RateLimiter};
 
@@ -45,13 +46,13 @@ async fn main() -> Result<()> {
 
     let cfg = Arc::new(Config::from_env().context("configuracion invalida")?);
     info!(
-        canal = %cfg.channel_name,
-        idx = cfg.channel_idx,
         isla = %cfg.island_iata,
-        topic = %cfg.channel_topic(),
         observabilidad = cfg.obs.is_some(),
         "bridge-msc v{}", env!("CARGO_PKG_VERSION")
     );
+    for canal in &cfg.channels {
+        info!(canal = %canal.name, idx = canal.idx, topic = %cfg.topic(canal), "canal puenteado");
+    }
 
     // --- 1. Nodo: primera conexion, que ademas nos da la identidad ---
     let nodo: NodoCompartido = Arc::new(RwLock::new(None));
@@ -71,7 +72,7 @@ async fn main() -> Result<()> {
         &cfg.chan_mqtt,
         &format!("meshchan-{}", &pubkey[..12.min(pubkey.len())]),
         &cfg.chan_mqtt.user.clone(),
-        Some(cfg.channel_topic()),
+        cfg.channels.iter().map(|c| cfg.topic(c)).collect(),
         Some(rx_tx),
     )
     .context("levantando el cliente MQTT del canal")?;
@@ -92,7 +93,7 @@ async fn main() -> Result<()> {
             &obs.endpoint,
             &format!("meshchan-obs-{}", &gw[..12.min(gw.len())]),
             &usuario,
-            None,
+            Vec::new(),
             None,
         )
         .context("levantando el cliente MQTT de observabilidad")?;
@@ -212,6 +213,9 @@ async fn conectar_e_identificar(cfg: &Config) -> (Arc<MeshCore>, String, String)
 }
 
 /// MQTT -> RF: clasifica, deduplica, limita y solo entonces inyecta.
+///
+/// El rate-limit va POR CANAL: una rafaga en un canal (p.ej. respuestas de bots)
+/// no deja mudo al canal publico.
 fn spawn_inyector(
     cfg: Arc<Config>,
     pubkey: Arc<String>,
@@ -221,7 +225,11 @@ fn spawn_inyector(
     max_texto: usize,
 ) {
     tokio::spawn(async move {
-        let mut rl = RateLimiter::new(cfg.rate_per_min, cfg.rate_burst, cfg.rate_min_interval);
+        let mut limites: HashMap<u8, RateLimiter> = cfg
+            .channels
+            .iter()
+            .map(|c| (c.idx, RateLimiter::new(cfg.rate_per_min, cfg.rate_burst, cfg.rate_min_interval)))
+            .collect();
         while let Some(inc) = rx.recv().await {
             let msg: ChanMessage = match serde_json::from_slice(&inc.payload) {
                 Ok(m) => m,
@@ -231,7 +239,7 @@ fn spawn_inyector(
                 }
             };
 
-            match bridge::classify_inbound(&msg, &pubkey, &cfg.channel_name) {
+            match bridge::classify_inbound(&msg, &pubkey, &cfg.channels) {
                 Inbound::EcoPropio => {
                     debug!(id = %msg.id, "eco propio de vuelta del hub, ignorado");
                     continue;
@@ -249,6 +257,10 @@ fn spawn_inyector(
                 }
                 Inbound::Inyectar => {}
             }
+            // classify_inbound ya garantizo que el canal es nuestro.
+            let Some(canal) = cfg.canal_por_nombre(&msg.channel) else {
+                continue;
+            };
 
             // El id del hub manda: si ya lo vimos (lo publicamos nosotros, o ya
             // lo inyectamos), no se repite.
@@ -257,12 +269,13 @@ fn spawn_inyector(
                 continue;
             }
 
+            let rl = limites.get_mut(&canal.idx).expect("un limitador por canal");
             if let Err(d) = rl.try_acquire() {
                 let motivo = match d {
                     Denial::SinTokens => "sin tokens (RATE_PER_MIN)",
                     Denial::MuySeguido => "muy seguido (RATE_MIN_INTERVAL_S)",
                 };
-                warn!(id = %msg.id, de = %msg.sender, motivo, "DESCARTADO por rate-limit");
+                warn!(id = %msg.id, canal = %canal.name, de = %msg.sender, motivo, "DESCARTADO por rate-limit");
                 continue;
             }
 
@@ -285,10 +298,10 @@ fn spawn_inyector(
                 .commands()
                 .lock()
                 .await
-                .send_channel_msg(cfg.channel_idx, &texto, None)
+                .send_channel_msg(canal.idx, &texto, None)
                 .await;
             match r {
-                Ok(()) => info!(id = %msg.id, de = %msg.sender, isla = %msg.origin_island, "inyectado a la RF: {texto}"),
+                Ok(()) => info!(id = %msg.id, canal = %canal.name, de = %msg.sender, isla = %msg.origin_island, "inyectado a la RF: {texto}"),
                 Err(e) => warn!(id = %msg.id, error = %e, "fallo la inyeccion a la RF"),
             }
         }
@@ -340,7 +353,6 @@ async fn correr_sesion(
     let mut tick = tokio::time::interval(WATCHDOG_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    let topic = cfg.channel_topic();
     let drenando = Arc::new(AtomicBool::new(false));
     let mut ultimo_mensaje = Instant::now();
     let mut ultimo_canal = Instant::now();
@@ -369,13 +381,13 @@ async fn correr_sesion(
                         ultimo_mensaje = Instant::now();
                         aviso_pendiente = false;
                         if let EventPayload::ChannelMessage(m) = ev.payload {
-                            if m.channel_idx != cfg.channel_idx {
-                                debug!(idx = m.channel_idx, "mensaje de otro canal, ignorado");
+                            let Some(canal) = cfg.canal_por_idx(m.channel_idx) else {
+                                debug!(idx = m.channel_idx, "mensaje de un canal no puenteado, ignorado");
                                 continue;
-                            }
+                            };
                             ultimo_canal = Instant::now();
                             aviso_canal = false;
-                            procesar_rf(cfg, pubkey, nombre_nodo, &m.text, dedup, hub, &topic).await;
+                            procesar_rf(cfg, canal, pubkey, nombre_nodo, &m.text, dedup, hub).await;
                         }
                     }
                     EventType::ContactMsgRecv => {
@@ -436,15 +448,15 @@ fn lanzar_drenaje(mc: Arc<MeshCore>, drenando: Arc<AtomicBool>) {
     });
 }
 
-/// RF -> MQTT: un mensaje del canal publico oido por la radio.
+/// RF -> MQTT: un mensaje de un canal puenteado oido por la radio.
 async fn procesar_rf(
     cfg: &Config,
+    canal: &Canal,
     pubkey: &str,
     nombre_nodo: &str,
     raw: &str,
     dedup: &Arc<Mutex<Dedup>>,
     hub: &mqtt::MqttHandle,
-    topic: &str,
 ) {
     let (nick, texto) = bridge::split_sender(raw);
     let sender = nick.unwrap_or_default();
@@ -468,8 +480,8 @@ async fn procesar_rf(
     let sender_id = sender.clone();
 
     let ts = bridge::now_epoch();
-    let id = bridge::message_id(&cfg.channel_name, &sender_id, &texto, ts);
-    let id_previo = bridge::message_id_previo(&cfg.channel_name, &sender_id, &texto, ts);
+    let id = bridge::message_id(&canal.name, &sender_id, &texto, ts);
+    let id_previo = bridge::message_id_previo(&canal.name, &sender_id, &texto, ts);
     {
         let mut cache = dedup.lock().await;
         // Spec §7: probamos tambien el bucket anterior, para no republicar un
@@ -487,7 +499,7 @@ async fn procesar_rf(
     let msg = ChanMessage {
         v: bridge::PROTOCOL_VERSION,
         id: id.clone(),
-        channel: cfg.channel_name.clone(),
+        channel: canal.name.clone(),
         text: texto.clone(),
         sender: sender.clone(),
         sender_id,
@@ -496,8 +508,8 @@ async fn procesar_rf(
         ts,
     };
     match serde_json::to_vec(&msg) {
-        Ok(body) => match hub.publish(topic, body).await {
-            Ok(()) => info!(id = %id, de = %sender, "publicado al hub: {texto}"),
+        Ok(body) => match hub.publish(&cfg.topic(canal), body).await {
+            Ok(()) => info!(id = %id, canal = %canal.name, de = %sender, "publicado al hub: {texto}"),
             Err(e) => warn!(id = %id, error = %format!("{e:#}"), "no se pudo publicar al hub"),
         },
         Err(e) => warn!(error = %e, "no se pudo serializar el mensaje"),

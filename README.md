@@ -198,8 +198,28 @@ comunidad. `.env.example` ya viene apuntado ahí, y estos son los datos:
 | **Servidor** | `bridge-msc.meshchile.cl` |
 | **Puerto** | `8884` |
 | **Protocolo** | MQTT sobre TLS (`mqtts`), certificado Let's Encrypt |
-| **Topic** | `meshchan/CL/Public` |
-| **Canal en el nodo** | `Public`, índice `0` |
+| **Topics** | `meshchan/CL/Public` y `meshchan/CL/bots` |
+| **Canales en el nodo** | `Public` (índice `0`) y el hashtag `#bots` (índice `1`) |
+
+#### El canal `#bots`
+
+Los bots de la malla (por ejemplo el de Santiago) atienden **solo** en el canal
+hashtag `#bots`, para dejar libre el canal público. Para que la gente de tu isla
+pueda usarlos, puentea también ese canal:
+
+1. En el nodo del bridge, agrega el canal hashtag `#bots` en el índice `1` (desde
+   la app, "agregar canal hashtag"; la clave se deriva del nombre).
+2. En el `.env`, reemplaza `CHANNEL_NAME`/`CHANNEL_IDX` por:
+
+   ```ini
+   CHANNELS=Public:0,bots:1
+   ```
+
+   En el topic va `bots`, **sin `#`**: el `#` es comodín en MQTT.
+
+Los comandos que escriban en `#bots` en tu isla llegan al bot por el hub y la
+respuesta vuelve por el mismo canal. Cada canal lleva su propio rate-limit, así
+que una ráfaga de respuestas en `#bots` no deja mudo al público.
 
 ### Cómo pedir tus credenciales
 
@@ -232,12 +252,14 @@ Las que más se prestan a confusión:
 |---|---|
 | `CHANNEL_NAME` | El nombre del canal **tal como está en el nodo**, y también el último nivel del topic. Distingue mayúsculas. |
 | `CHANNEL_IDX` | El índice del canal en el nodo, casi siempre `0`. Si no calza, el agente no oye nada. |
+| `CHANNELS` | Para puentear **varios** canales: pares `nombre:índice` separados por coma (`Public:0,bots:1`). Si está, reemplaza a `CHANNEL_NAME`/`CHANNEL_IDX`. Un canal hashtag va sin `#` (`#bots` del nodo → `bots`). |
 | `ISLAND_IATA` | La etiqueta de tu isla. Es lo que las otras islas ven como `[SCL]`. |
 | `CHAN_MQTT_TRANSPORT` | `tcp` para MQTT nativo (1883 / 8883), `ws` para websockets (443). |
 | `CHAN_MQTT_TLS` | `true` por defecto. Ponlo en `false` solo en una red de confianza. |
 
 El topic queda `<CHAN_TOPIC_PREFIX>[/<CHAN_REGION>]/<CHANNEL_NAME>`; con los
-valores por defecto y `CHAN_REGION=CL` da `meshchan/CL/Public`.
+valores por defecto y `CHAN_REGION=CL` da `meshchan/CL/Public`. Con `CHANNELS`
+hay un topic por canal (`meshchan/CL/Public`, `meshchan/CL/bots`).
 
 > **Todos los bridges de un mismo canal tienen que usar exactamente el mismo
 > topic** (spec §5). Si el tuyo no calza con el de la comunidad, vas a estar solo

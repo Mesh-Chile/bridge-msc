@@ -87,6 +87,58 @@ pub struct ObsConfig {
     pub interval: Duration,
 }
 
+/// Un canal puenteado: su nombre meshchan (ultimo nivel del topic y campo
+/// `channel` del payload) y el slot del nodo donde vive en la RF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Canal {
+    pub name: String,
+    pub idx: u8,
+}
+
+/// Parsea `CHANNELS`: pares `nombre:idx` separados por coma, p.ej.
+/// `Public:0,bots:1`. Nombres e indices no se pueden repetir.
+pub fn parse_channels(raw: &str) -> Result<Vec<Canal>> {
+    let mut canales: Vec<Canal> = Vec::new();
+    for item in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let Some((name, idx)) = item.rsplit_once(':') else {
+            bail!("CHANNELS: '{item}' no es nombre:idx (p.ej. Public:0,bots:1)");
+        };
+        let name = name.trim().to_string();
+        let idx: u8 = idx
+            .trim()
+            .parse()
+            .map_err(|e| anyhow::anyhow!("CHANNELS: indice invalido en '{item}': {e}"))?;
+        validar_nombre(&name)?;
+        if canales.iter().any(|c| c.name == name) {
+            bail!("CHANNELS: el canal '{name}' esta repetido");
+        }
+        if canales.iter().any(|c| c.idx == idx) {
+            bail!("CHANNELS: el indice {idx} esta repetido");
+        }
+        canales.push(Canal { name, idx });
+    }
+    if canales.is_empty() {
+        bail!("CHANNELS esta vacio");
+    }
+    Ok(canales)
+}
+
+fn validar_nombre(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("el nombre de canal no puede ser vacio");
+    }
+    if name.contains('#') {
+        bail!(
+            "el nombre de canal '{name}' no puede llevar '#': es nivel de topic MQTT. \
+             Para el canal hashtag #bots del nodo usa 'bots'"
+        );
+    }
+    if name.contains('/') || name.contains('+') {
+        bail!("el nombre de canal '{name}' no puede contener / ni + (se usa como nivel de topic MQTT)");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     // --- nodo ---
@@ -94,9 +146,9 @@ pub struct Config {
     pub address: String,
     pub baud: u32,
 
-    // --- canal ---
-    pub channel_name: String,
-    pub channel_idx: u8,
+    // --- canales ---
+    /// Nunca vacio. El primero es el principal (el de los logs y el smoke test).
+    pub channels: Vec<Canal>,
     pub island_iata: String,
     pub topic_prefix: String,
     /// Segmento OPCIONAL de region entre el prefijo y el canal (spec §5).
@@ -224,8 +276,18 @@ impl Config {
             transport,
             address,
             baud: env_num("MC_BAUD", 115_200u32)?,
-            channel_name: env_req("CHANNEL_NAME")?,
-            channel_idx: env_num("CHANNEL_IDX", 0u8)?,
+            // CHANNELS manda; sin ella, el par de siempre CHANNEL_NAME/CHANNEL_IDX.
+            channels: match env_opt("CHANNELS") {
+                Some(raw) => parse_channels(&raw)?,
+                None => {
+                    let canal = Canal {
+                        name: env_req("CHANNEL_NAME")?,
+                        idx: env_num("CHANNEL_IDX", 0u8)?,
+                    };
+                    validar_nombre(&canal.name)?;
+                    vec![canal]
+                }
+            },
             island_iata: env_req("ISLAND_IATA")?,
             topic_prefix: env_or("CHAN_TOPIC_PREFIX", "meshchan")
                 .trim_matches('/')
@@ -241,28 +303,66 @@ impl Config {
             obs,
         };
 
-        if cfg.channel_name.contains('/') || cfg.channel_name.contains('+') || cfg.channel_name.contains('#') {
-            bail!("CHANNEL_NAME no puede contener / + # (se usa como nivel de topic MQTT)");
-        }
         if cfg.max_text_len == 0 {
             bail!("MAX_TEXT_LEN debe ser > 0");
         }
         Ok(cfg)
     }
 
-    /// Topic del canal (spec §5): `<prefix>[/<region>]/<channel>`.
+    /// Topic de un canal (spec §5): `<prefix>[/<region>]/<channel>`.
     ///
     /// Con CHAN_TOPIC_PREFIX=meshchan y CHAN_REGION=CL queda
     /// `meshchan/CL/publica`. Todos los bridges de un mismo canal tienen que
     /// publicar y suscribirse EXACTAMENTE al mismo topic.
-    pub fn channel_topic(&self) -> String {
+    pub fn topic(&self, canal: &Canal) -> String {
         if self.topic_region.is_empty() {
-            format!("{}/{}", self.topic_prefix, self.channel_name)
+            format!("{}/{}", self.topic_prefix, canal.name)
         } else {
-            format!(
-                "{}/{}/{}",
-                self.topic_prefix, self.topic_region, self.channel_name
-            )
+            format!("{}/{}/{}", self.topic_prefix, self.topic_region, canal.name)
         }
+    }
+
+    pub fn canal_por_nombre(&self, name: &str) -> Option<&Canal> {
+        self.channels.iter().find(|c| c.name == name)
+    }
+
+    pub fn canal_por_idx(&self, idx: u8) -> Option<&Canal> {
+        self.channels.iter().find(|c| c.idx == idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn c(name: &str, idx: u8) -> Canal {
+        Canal { name: name.into(), idx }
+    }
+
+    #[test]
+    fn channels_con_dos_canales() {
+        assert_eq!(
+            parse_channels("Public:0, bots:1").unwrap(),
+            vec![c("Public", 0), c("bots", 1)]
+        );
+    }
+
+    #[test]
+    fn channels_tolera_coma_final() {
+        assert_eq!(parse_channels("Public:0,").unwrap(), vec![c("Public", 0)]);
+    }
+
+    #[test]
+    fn channels_rechaza_lo_malo() {
+        for malo in ["", "Public", "Public:x", "Public:300", "#bots:1", "a/b:1", "a+:1",
+                     "Public:0,Public:1", "Public:0,bots:0"] {
+            assert!(parse_channels(malo).is_err(), "deberia rechazar {malo:?}");
+        }
+    }
+
+    #[test]
+    fn el_hashtag_sugiere_el_nombre_sin_gato() {
+        let e = parse_channels("#bots:1").unwrap_err().to_string();
+        assert!(e.contains("usa 'bots'"), "{e}");
     }
 }

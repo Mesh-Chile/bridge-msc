@@ -77,14 +77,14 @@ fn tls_config(ep: &MqttEndpoint) -> Result<TlsConfiguration> {
 /// Levanta un cliente MQTT y su EventLoop.
 ///
 /// - `client_id` debe ser unico por conexion contra el mismo broker.
-/// - `subscribe` se re-suscribe sola en cada reconexion (en el CONNACK).
+/// - `subscribe` (uno por canal) se re-suscribe solo en cada reconexion (en el CONNACK).
 /// - `incoming_tx` recibe los publish; pasa `None` si el cliente es solo de escritura.
 pub fn spawn(
     name: &'static str,
     ep: &MqttEndpoint,
     client_id: &str,
     user: &str,
-    subscribe: Option<String>,
+    subscribe: Vec<String>,
     incoming_tx: Option<mpsc::Sender<Incoming>>,
 ) -> Result<MqttHandle> {
     init_crypto();
@@ -123,7 +123,7 @@ pub fn spawn(
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
                     backoff = Duration::from_secs(1);
                     info!(broker = name, "conectado");
-                    if let Some(topic) = &subscribe {
+                    for topic in &subscribe {
                         match client.subscribe(topic.clone(), QoS::AtLeastOnce).await {
                             Ok(()) => info!(broker = name, topic = %topic, "suscrito"),
                             Err(e) => warn!(broker = name, error = %e, "no se pudo suscribir"),

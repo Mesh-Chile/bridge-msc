@@ -25,7 +25,9 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_env()?;
-    let topic = cfg.channel_topic();
+    // Con varios canales (CHANNELS) se prueba el primero.
+    let canal = &cfg.channels[0];
+    let topic = cfg.topic(canal);
     println!("hub   : {}", cfg.chan_mqtt.descripcion());
     println!("topic : {topic}");
 
@@ -35,7 +37,7 @@ async fn main() -> Result<()> {
         &cfg.chan_mqtt,
         "meshchan-smoke",
         &cfg.chan_mqtt.user,
-        Some(topic.clone()),
+        vec![topic.clone()],
         Some(tx),
     )?;
 
@@ -47,8 +49,8 @@ async fn main() -> Result<()> {
     let sender_id = "smoke-test";
     let msg = bridge::ChanMessage {
         v: bridge::PROTOCOL_VERSION,
-        id: bridge::message_id(&cfg.channel_name, sender_id, &texto, ts),
-        channel: cfg.channel_name.clone(),
+        id: bridge::message_id(&canal.name, sender_id, &texto, ts),
+        channel: canal.name.clone(),
         text: texto.clone(),
         sender: "smoke".into(),
         sender_id: sender_id.into(),
