@@ -212,7 +212,7 @@ pueda usarlos, puentea también ese canal:
 2. En el `.env`, reemplaza `CHANNEL_NAME`/`CHANNEL_IDX` por:
 
    ```ini
-   CHANNELS=Public:0,bots:1
+   CHANNELS=Public:0,bots:1,emergencias:2
    ```
 
    En el topic va `bots`, **sin `#`**: el `#` es comodín en MQTT.
